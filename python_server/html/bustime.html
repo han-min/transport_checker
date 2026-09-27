@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Times - TFL</title>
+<style>
+  :root { --bg: #0b0e14; --card: #151a26; --accent: #ff4d4d; --text: #e8e8e8; --muted: #8b92a5; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);padding:16px}
+  .container{max-width:480px;margin:0 auto}
+  h1{font-size:22px;margin:8px 0 16px;display:flex;align-items:center;gap:8px}
+  .search{display:flex;gap:8px;margin-bottom:16px}
+  .search input{flex:1;background:var(--card);border:1px solid #2a3246;color:white;padding:12px 14px;border-radius:12px;font-size:16px;outline:none}
+  .search button{background:var(--accent);border:none;color:white;padding:12px 18px;border-radius:12px;font-weight:600;cursor:pointer}
+  .stop-info{background:var(--card);padding:14px;border-radius:14px;margin-bottom:14px;border:1px solid #232a3d}
+  .stop-info .id{font-size:12px;color:var(--muted)}
+  .stop-info .time{font-size:12px;color:var(--muted);margin-top:4px}
+  .card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;align-items:center;gap:12px;border:1px solid #232a3d;animation:fade .3s}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .line{background:#ff4d4d;color:white;min-width:52px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}
+  .details{flex:1;min-width:0}
+  .dest{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .meta{font-size:13px;color:var(--muted);margin-top:2px}
+  .due{text-align:right}
+  .due .min{font-size:22px;font-weight:800;line-height:1}
+  .due .exp{font-size:12px;color:var(--muted);margin-top:2px}
+  .due.soon .min{color:#2eff7a}
+  .due.due2 .min{color:#ffde59}
+  .empty{text-align:center;padding:40px;color:var(--muted)}
+  .error{background:#3a1515;color:#ff8a8a;padding:12px;border-radius:12px;margin-bottom:12px}
+  .presets{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px}
+  .preset{background:var(--card);border:1px solid #2a3246;color:var(--muted);padding:8px 12px;border-radius:20px;font-size:13px;white-space:nowrap;cursor:pointer}
+  .preset.active{background:white;color:black;border-color:white}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🚍 London Buses</h1>
+  
+  <div class="search">
+    <input id="stopInput" placeholder="StopPoint ID e.g. 490020089S" value="490020089S">
+    <button onclick="load()">Go</button>
+  </div>
+
+  <div class="presets" id="presets">
+    <div class="preset active" data-id="490020089S">Kimpton Rd Sutton</div>
+    <div class="preset" data-id="490020089W">Kimpton Rd North Cheam</div>
+    <div class="preset" data-id="490G00012345">Custom</div>
+  </div>
+
+  <div id="stopInfo" class="stop-info" style="display:none"></div>
+  <div id="error"></div>
+  <div id="list"></div>
+</div>
+
+<script>
+const input = document.getElementById('stopInput');
+const list = document.getElementById('list');
+const stopInfo = document.getElementById('stopInfo');
+const errorEl = document.getElementById('error');
+let timer = null;
+
+function setPresets() {
+  document.querySelectorAll('.preset').forEach(p => {
+    p.onclick = () => {
+      document.querySelectorAll('.preset').forEach(x=>x.classList.remove('active'));
+      p.classList.add('active');
+      input.value = p.dataset.id;
+      load();
+    }
+  });
+}
+
+async function load() {
+  const stop = input.value.trim();
+  if (!stop) return;
+  errorEl.innerHTML = '';
+  list.innerHTML = '<div class="empty">Loading...</div>';
+  
+  try {
+    const res = await fetch(`/api/bus?stop=${encodeURIComponent(stop)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+
+    stopInfo.style.display = 'block';
+    stopInfo.innerHTML = `
+      <div style="font-weight:700">${stop} • Live Arrivals</div>
+      <div class="time">Updated: ${new Date().toLocaleTimeString()} • ${data.arrivals.length} buses</div>
+    `;
+
+    if (!data.arrivals.length) {
+      list.innerHTML = '<div class="empty">No buses in next 30 mins</div>';
+      return;
+    }
+
+    list.innerHTML = data.arrivals.map(b => {
+      const soonClass = b.dueInMin <= 2 ? 'soon' : b.dueInMin <= 5 ? 'due2' : '';
+      return `
+        <div class="card">
+          <div class="line">${b.line}</div>
+          <div class="details">
+            <div class="dest">${b.destination}</div>
+            <div class="meta">${b.vehicleId ? 'Bus ' + b.vehicleId : ''} • Exp ${b.expected || '-'}</div>
+          </div>
+          <div class="due ${soonClass}">
+            <div class="min">${b.dueInMin <= 0 ? 'Due' : b.dueInMin + 'm'}</div>
+            <div class="exp">${b.expected}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+  } catch(e) {
+    errorEl.innerHTML = `<div class="error">Error: ${e.message}</div>`;
+    list.innerHTML = '';
+  }
+}
+
+input.addEventListener('keydown', e => { if(e.key === 'Enter') load(); });
+
+setPresets();
+load();
+clearInterval(timer);
+timer = setInterval(load, 20000); // refresh every 20s
+</script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Presence + Avatars</title>
+<style>
+  body { font-family: system-ui; background:#0f1115; color:#e5e7eb; max-width:1100px; margin:32px auto; padding:0 20px; }
+  h1 { text-align:center; margin-bottom:4px; }.sub { text-align:center; color:#9ca3af; margin-bottom:28px; }
+ .board { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; margin-bottom:36px; }
+ .card { background:#1a1d24; border:1px solid #2a2e39; border-radius:16px; padding:16px; display:flex; gap:14px; }
+ .card.inside { border-color:#22c55e44; }
+ .avatar-img { width:64px; height:64px; border-radius:50%; object-fit:cover; background:#2a2e39; flex-shrink:0; }
+ .avatar-wrap { position:relative; }
+ .presence-dot { position:absolute; bottom:0; right:0; width:12px; height:12px; border-radius:50%; border:2px solid #1a1d24; }
+ .presence-dot.in { background:#22c55e; box-shadow:0 0 6px #22c55e; }.presence-dot.out { background:#6b7280; }
+ .name { font-weight:600; }.meta { color:#9ca3af; font-size:0.82rem; margin-top:4px; }
+ .map-wrap { background:#14171e; border:1px solid #2a2e39; border-radius:20px; padding:20px; }
+ .map { min-height:420px; border-radius:14px; background:radial-gradient(800px 400px at 50% 0%, #1e2330 0%, #14171e 70%); padding:16px; display:flex; flex-wrap:wrap; gap:24px; }
+ .hotspot { width:190px; height:190px; border-radius:50%; border:2px dashed #2a2e39; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a1d24aa; }
+ .hotspot.active { border-style:solid; border-color:#22c55e55; background:#162117; }
+ .hotspot-name { font-weight:600; font-size:0.9rem; }.hotspot-count { font-size:0.75rem; color:#9ca3af; }
+ .avatars { display:flex; gap:0; margin-top:12px; }
+ .avatars img { width:54px; height:54px; border-radius:50%; border:2px solid #0f1115; margin-left:-8px; object-fit:cover; }
+ .avatars img:first-child { margin-left:0; }
+ .outside-zone { width:100%; border-top:1px dashed #2a2e39; margin-top:12px; padding-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+ .chip { background:#1a1d24; border:1px solid #2a2e39; padding:4px 10px 4px 4px; border-radius:999px; font-size:0.8rem; display:flex; align-items:center; gap:8px; }
+ .chip img { width:34px; height:34px; border-radius:50%; object-fit:cover; }
+</style>
+</head>
+<body>
+<h1>Presence Board</h1>
+
+<a href="/logout" style="position:fixed;top:12px;right:12px;color:#9ca3af;font-size:0.8rem">Logout</a>
+
+<div id="subtitle" class="sub">Loading...</div>
+<div id="board" class="board"></div>
+<div class="map-wrap"><div id="map" class="map"></div></div>
+
+<script>
+const NAMES_LIST = ['Han', 'PersonA'];
+
+// --- AVATAR CONFIG ---
+// Put real image URLs here if you have them, e.g. 'Han': '/html/avatars/han.jpg'
+const AVATAR_OVERRIDES = {
+  'Han': 'avatars/han.jpg',
+  // 'PersonA': 'https://...'
+};
+
+function getAvatarUrl(name) {
+  if (AVATAR_OVERRIDES[name]) return AVATAR_OVERRIDES[name];
+  // DiceBear generates a consistent cute avatar from the name - no personal photo needed
+  // You can swap to ui-avatars for initials: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`
+  return `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(name)}&backgroundColor=1a1d24,2a2e39,162117`;
+}
+
+const isEnter = a => /enter|inside|arrive/i.test(a||'');
+
+async function load() {
+  const all = await Promise.all(NAMES_LIST.map(async name => {
+    try {
+      const r = await fetch(`/api/proxy?v=${encodeURIComponent(name)}`);
+      const d = await r.json();
+      const recs = (d.records||[]).map(x=>({...x, t:new Date(x.time).getTime()})).sort((a,b)=>b.t-a.t);
+      return { name, recs, avatar: getAvatarUrl(name) };
+    } catch { return { name, recs:[], avatar: getAvatarUrl(name) } }
+  }));
+
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  all.forEach(({name, recs, avatar}) => {
+    const newest = recs[0];
+    const inside = newest? isEnter(newest.action) : false;
+    const card = document.createElement('div'); card.className = `card ${inside?'inside':''}`;
+
+    const wrap = document.createElement('div'); wrap.className='avatar-wrap';
+    const img = document.createElement('img'); img.className='avatar-img'; img.src=avatar; img.alt=name;
+    const dot = document.createElement('span'); dot.className=`presence-dot ${inside?'in':'out'}`;
+    wrap.append(img, dot);
+
+    const info = document.createElement('div');
+    const nameEl = document.createElement('div'); nameEl.className='name'; nameEl.textContent=name;
+    const stateEl = document.createElement('div'); stateEl.textContent = newest? (inside?`Inside: ${newest.location}`:`Outside • last ${newest.location}`) : 'No data';
+    stateEl.style.fontSize='0.9rem';
+    const meta = document.createElement('div'); meta.className='meta';
+    meta.textContent = newest? `${newest.action} • ${new Date(newest.t).toLocaleString()}` : '';
+    info.append(nameEl, stateEl, meta);
+
+    card.append(wrap, info);
+    board.appendChild(card);
+  });
+
+  // MAP
+  const hotspots = [...new Set(all.flatMap(u=>u.recs.map(r=>r.location)).filter(Boolean))];
+  const map = document.getElementById('map'); map.innerHTML='';
+
+  const occupancy = {}; hotspots.forEach(h=>occupancy[h]=[]); const outside=[];
+  all.forEach(u=>{
+    const n = u.recs[0];
+    if (!n) outside.push(u);
+    else if (isEnter(n.action)) occupancy[n.location]?.push(u)?? (occupancy[n.location]=[u]);
+    else outside.push(u);
+  });
+
+  hotspots.forEach(h=>{
+    const b = document.createElement('div'); b.className='hotspot'+(occupancy[h].length?' active':'');
+    const hn = document.createElement('div'); hn.className='hotspot-name'; hn.textContent=h;
+    const hc = document.createElement('div'); hc.className='hotspot-count'; hc.textContent=occupancy[h].length?`${occupancy[h].length} inside`:'empty';
+    const avs = document.createElement('div'); avs.className='avatars';
+    occupancy[h].forEach(p=>{
+      const im = document.createElement('img'); im.src=p.avatar; im.title=`${p.name}`; avs.appendChild(im);
+    });
+    b.append(hn, hc, avs); map.appendChild(b);
+  });
+
+  const outZone = document.createElement('div'); outZone.className='outside-zone';
+  outZone.append(Object.assign(document.createElement('span'), {textContent:'Outside / Traveling:', style:'color:#6b7280;font-size:0.8rem'}));
+  outside.forEach(o=>{
+    const chip = document.createElement('div'); chip.className='chip';
+    const im = document.createElement('img'); im.src=o.avatar;
+    const label = document.createElement('span'); label.textContent=o.name;
+    chip.append(im, label); outZone.appendChild(chip);
+  });
+  map.appendChild(outZone);
+
+  document.getElementById('subtitle').textContent = `Updated ${new Date().toLocaleTimeString()} • ${hotspots.length} hotspots`;
+}
+load(); setInterval(load, 300000);
+</script>
+</body>
+</html>

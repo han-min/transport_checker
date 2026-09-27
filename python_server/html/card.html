@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Presence Board</title>
+<style>
+  body { font-family: system-ui; background:#0f1115; color:#e5e7eb; max-width:1000px; margin:40px auto; padding:0 20px; }
+  h1 { text-align:center; font-weight:700; letter-spacing:-0.02em; }
+  #subtitle { text-align:center; color:#9ca3af; margin-bottom:32px; }
+  .board { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; }
+  .card { background:#1a1d24; border-radius:16px; padding:20px; border:1px solid #2a2e39; position:relative; overflow:hidden; }
+  .card.inside { border-color:#22c55e; box-shadow:0 0 0 1px #22c55e20, 0 0 30px #22c55e15; }
+  .card.outside { opacity:0.85; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:8px; }
+  .dot.in { background:#22c55e; box-shadow:0 0 8px #22c55e; animation: pulse 2s infinite; }
+  .dot.out { background:#6b7280; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.5 } }
+  .name { font-size:1.4rem; font-weight:600; margin:0; }
+  .state { font-size:1.05rem; margin:12px 0 4px; }
+  .meta { color:#9ca3af; font-size:0.85rem; }
+  .history { margin-top:16px; border-top:1px solid #2a2e39; padding-top:12px; }
+  .history div { font-size:0.8rem; color:#9ca3af; padding:3px 0; display:flex; justify-content:space-between; }
+  .tag { background:#2a2e39; padding:2px 8px; border-radius:999px; font-size:0.75rem; }
+  .tag.enter { color:#22c55e; }
+  .tag.exit { color:#f59e0b; }
+</style>
+</head>
+<body>
+<h1>Presence Board</h1>
+<div id="subtitle">Live from hotspots</div>
+<div id="board" class="board"></div>
+
+<script>
+const NAMES_LIST = ['Han', 'PersonA'];
+
+function timeAgo(ms) {
+  const s = Math.floor((Date.now() - ms)/1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ago`;
+}
+function durationSince(ms) {
+  const s = Math.floor((Date.now() - ms)/1000);
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+}
+
+function isEnterAction(action) {
+  const a = (action||'').toLowerCase();
+  return a.includes('enter') || a.includes('in') || a.includes('arrive');
+}
+
+function renderCard(name, records) {
+  const board = document.getElementById('board');
+  const card = document.createElement('div');
+  card.className = 'card';
+  
+  const last = records && records.length ? records[0] : null; // assume sorted newest first, flip if needed
+  // your API might be oldest first - handle both:
+  const sorted = [...(records||[])].sort((a,b) => new Date(b.time) - new Date(a.time));
+  const newest = sorted[0];
+
+  let isInside = false;
+  let locationName = 'Unknown';
+  let since = null;
+  if (newest) {
+    isInside = isEnterAction(newest.action);
+    locationName = newest.location;
+    since = new Date(newest.time).getTime();
+  }
+
+  card.classList.add(isInside ? 'inside' : 'outside');
+
+  const dot = document.createElement('span');
+  dot.className = `dot ${isInside ? 'in' : 'out'}`;
+
+  const nameEl = document.createElement('h2');
+  nameEl.className = 'name';
+  nameEl.textContent = name;
+
+  const stateEl = document.createElement('div');
+  stateEl.className = 'state';
+  stateEl.appendChild(dot);
+  stateEl.append(document.createTextNode(
+    isInside ? `Inside: ${locationName}` : (newest ? `Outside — last: ${locationName}` : 'No data')
+  ));
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'meta';
+  if (since) {
+    metaEl.textContent = isInside ? `for ${durationSince(since)} • since ${new Date(since).toLocaleTimeString()}` : `left ${timeAgo(since)}`;
+  } else {
+    metaEl.textContent = 'No records yet';
+  }
+
+  card.append(nameEl, stateEl, metaEl);
+
+  if (sorted.length > 0) {
+    const hist = document.createElement('div');
+    hist.className = 'history';
+    sorted.slice(0,5).forEach(r => {
+      const row = document.createElement('div');
+      const left = document.createElement('span');
+      left.textContent = `${new Date(r.time).toLocaleTimeString()} • ${r.location}`;
+      const right = document.createElement('span');
+      right.className = `tag ${isEnterAction(r.action) ? 'enter' : 'exit'}`;
+      right.textContent = r.action;
+      row.append(left, right);
+      hist.appendChild(row);
+    });
+    card.appendChild(hist);
+  }
+
+  board.appendChild(card);
+}
+
+async function load() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  const results = await Promise.all(NAMES_LIST.map(async name => {
+    try {
+      const res = await fetch(`/api/proxy?v=${encodeURIComponent(name)}`);
+      const data = await res.json();
+      return { name, records: data.records || [] };
+    } catch { return { name, records: [] }; }
+  }));
+  results.forEach(r => renderCard(r.name, r.records));
+  document.getElementById('subtitle').textContent = `Last updated ${new Date().toLocaleTimeString()} • ${results.length} users`;
+}
+
+load();
+setInterval(load, 30000); // refresh every 30s
+</script>
+</body>
+</html>

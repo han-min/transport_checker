@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Train Troubleshooter</title>
+<style>
+  body { font-family: system-ui; background:#0f1115; color:#e5e7eb; max-width:900px; margin:32px auto; padding:0 20px; }
+  h1 { margin-bottom:4px; } .sub { color:#9ca3af; margin-bottom:24px; }
+  .panel { background:#1a1d24; border:1px solid #2a2e39; border-radius:16px; padding:20px; margin-bottom:20px; }
+  label { font-size:0.85rem; color:#9ca3af; display:block; margin-bottom:6px; }
+  input { background:#0f1115; border:1px solid #2a2e39; border-radius:10px; padding:10px 12px; color:#fff; width:120px; margin-right:8px; text-transform:uppercase; }
+  button { background:#22c55e; border:0; border-radius:10px; padding:10px 16px; color:#000; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:0.5; }
+  pre { background:#0f1115; border:1px solid #2a2e39; border-radius:12px; padding:12px; overflow:auto; font-size:0.8rem; max-height:400px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+  .status { padding:8px 12px; border-radius:999px; font-size:0.8rem; display:inline-block; }
+  .ok { background:#162117; color:#22c55e; border:1px solid #22c55e44; }
+  .err { background:#21171a; color:#ef4444; border:1px solid #ef444444; }
+  .service { display:flex; justify-content:space-between; align-items:center; padding:12px; border-bottom:1px solid #2a2e39; }
+  .service:last-child { border:0; }
+  .etd { font-weight:600; } .etd.delay { color:#facc15; } .etd.cancel { color:#ef4444; } .etd.ontime { color:#22c55e; }
+</style>
+</head>
+<body>
+<h1>Train API Troubleshooter</h1>
+<div class="sub">Tests <code>/api/trains?from=&to=</code> on your proxy server</div>
+
+<div class="panel">
+  <div class="row">
+    <div>
+      <label>SUC (Sutton Common) WIM (Wimbledon) KNG (Kingston)</label>
+      <input id="from" value="SUC" placeholder="SUC">
+    </div>
+    <div>
+      <label>TO CRS (optional)</label>
+      <input id="to" value="WIM" placeholder="WIM">
+    </div>
+    <button id="btn" onclick="run()">Fetch Trains</button>
+    <a href="/location.html" style="color:#9ca3af; font-size:0.85rem; margin-left:auto;">← Back to Presence</a>
+  </div>
+  <div id="status"></div>
+</div>
+
+<div class="panel">
+  <h3 style="margin-top:0">Live Result</h3>
+  <div id="services"></div>
+</div>
+
+<div class="panel">
+  <h3 style="margin-top:0">Raw JSON + Debug</h3>
+  <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:8px;">Request URL: <code id="reqUrl"></code></div>
+  <pre id="raw">Click Fetch...</pre>
+</div>
+
+<script>
+async function run(){
+  const from = document.getElementById('from').value.trim().toUpperCase() || 'CLJ';
+  const to = document.getElementById('to').value.trim().toUpperCase() || 'WAT';
+  const btn = document.getElementById('btn');
+  const url = `/api/trains?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  
+  document.getElementById('reqUrl').textContent = url;
+  document.getElementById('status').innerHTML = 'Fetching...';
+  btn.disabled = true;
+  document.getElementById('raw').textContent = 'Loading...';
+  document.getElementById('services').innerHTML = '';
+
+  try {
+    const r = await fetch(url);
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error('Not JSON, got: ' + text.slice(0,200)) }
+
+    document.getElementById('raw').textContent = JSON.stringify(data, null, 2);
+
+    if (!r.ok || data.success === false) {
+      document.getElementById('status').innerHTML = `<span class="status err">HTTP ${r.status} - ${data.error||'error'}</span>`;
+      return;
+    }
+
+    document.getElementById('status').innerHTML = `<span class="status ok">OK • ${data.services?.length||0} services • ${data.generatedAt||''}</span>`;
+
+    const list = document.getElementById('services');
+    if (!data.services || data.services.length === 0) {
+      list.innerHTML = `<div style="color:#9ca3af">No services returned. Try FROM=WAT TO=CLJ or check if station code is valid.</div>`;
+    } else {
+      data.services.forEach(s=>{
+        const cls = s.isCancelled ? 'cancel' : (s.etd==='On time' ? 'ontime' : (s.etd==='Delayed' ? 'delay' : ''));
+        const div = document.createElement('div'); div.className='service';
+        div.innerHTML = `
+          <div><b>${s.std}</b> → ${s.destination||''} <span style="color:#9ca3af">Plat ${s.platform||'-'} • ${s.operator||''}</span><br>
+          <span style="font-size:0.8rem; color:#9ca3af">${s.delayReason||s.cancelReason||''}</span></div>
+          <div class="etd ${cls}">${s.etd}${s.isCancelled?' (Cancelled)':''}</div>
+        `;
+        list.appendChild(div);
+      });
+    }
+
+  } catch (e) {
+    document.getElementById('status').innerHTML = `<span class="status err">FAIL: ${e.message}</span>`;
+    document.getElementById('raw').textContent = e.stack || e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+run();
+</script>
+</body>
+</html>

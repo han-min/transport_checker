@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Location Records Summary</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: #f4f6f8;
+      color: #333;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    h1 {
+      text-align: center;
+      color: #111827;
+      margin-bottom: 24px;
+    }
+
+    .status-summary {
+      text-align: center;
+      color: #6b7280;
+      margin-bottom: 32px;
+      font-size: 0.95rem;
+    }
+
+    .person-card {
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      margin-bottom: 32px;
+    }
+
+    .person-card h2 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      color: #1f2937;
+      font-size: 1.25rem;
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 8px;
+    }
+
+    .record-count {
+      font-size: 0.875rem;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    th {
+      background-color: #f9fafb;
+      color: #374151;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    tr:hover {
+      background-color: #f9fafb;
+    }
+
+    .no-data {
+      color: #9ca3af;
+      font-style: italic;
+      padding: 12px 0;
+    }
+
+    .error-msg {
+      color: #dc2626;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Location Records Summary</h1>
+  <div id="globalStatus" class="status-summary">Loading records for all users...</div>
+
+  <!-- Tables will be appended dynamically here -->
+  <div id="container"></div>
+
+  <script>
+    // List of names to iterate over
+    const NAMES_LIST = ['Han', 'PersonA'];
+
+    async function loadAllRecords() {
+      const container = document.getElementById('container');
+      const globalStatus = document.getElementById('globalStatus');
+
+      let totalRecordsFound = 0;
+
+      // Iterate through each name sequentially
+      for (const name of NAMES_LIST) {
+        // 1. Create a card wrapper for this person
+        const card = document.createElement('div');
+        card.className = 'person-card';
+
+        const title = document.createElement('h2');
+        title.textContent = `User: ${name}`;
+        card.appendChild(title);
+
+        const countInfo = document.createElement('div');
+        countInfo.className = 'record-count';
+        countInfo.textContent = 'Fetching data...';
+        card.appendChild(countInfo);
+
+        container.appendChild(card);
+
+        // 2. Fetch data via Python proxy
+        try {
+          const response = await fetch(`/api/proxy?v=${encodeURIComponent(name)}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const data = await response.json();
+
+          if (data.success && data.records && data.records.length > 0) {
+            countInfo.textContent = `Total Records: ${data.count}`;
+            totalRecordsFound += data.count;
+
+            // Build table
+            const table = document.createElement('table');
+            table.innerHTML = `
+              <thead>
+                <tr>
+                  <th>Date & Time</th>
+                  <th>Action</th>
+                  <th>Location</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.records.map(r => `
+                  <tr>
+                    <td>${new Date(r.time).toLocaleString()}</td>
+                    <td>${r.action}</td>
+                    <td>${r.location}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            `;
+            card.appendChild(table);
+          } else {
+            countInfo.textContent = 'Total Records: 0';
+            const noData = document.createElement('div');
+            noData.className = 'no-data';
+            noData.textContent = 'No records found for this user.';
+            card.appendChild(noData);
+          }
+        } catch (err) {
+          console.error(`Error loading ${name}:`, err);
+          countInfo.innerHTML = `<span class="error-msg">Failed to load data: ${err.message}</span>`;
+        }
+      }
+
+      globalStatus.textContent = `Finished loading. Rendered tables for ${NAMES_LIST.length} users (${totalRecordsFound} total records).`;
+    }
+
+    // Run automatically when DOM is ready
+    window.addEventListener('DOMContentLoaded', loadAllRecords);
+  </script>
+
+</body>
+</html>
