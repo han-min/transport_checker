@@ -3,6 +3,7 @@ import socketserver
 import urllib.request
 import urllib.parse
 import json
+import os
 from datetime import datetime
 from auth import AuthMixin
 
@@ -10,8 +11,13 @@ PORT = 8080
 DIRECTORY = "html"
 
 # === TFL CONFIG - PUT YOUR KEYS HERE ===
-TFL_APP_ID = ""
-TFL_APP_KEY = ""
+TFL_APP_ID = "xxx"
+TFL_APP_KEY = "xxx"
+
+# === raildata.org.uk Live departure board consumer key ===
+RAIL_API_KEY="xxx"
+RAIL_PRODUCT_PREFIX="1010-live-departure-board-dep1_2"
+
 
 def location_database_handler(handler):
     """Handles /api/proxy?v=xxx -> proxies to creativecarrot API"""
@@ -19,7 +25,7 @@ def location_database_handler(handler):
     query_params = urllib.parse.parse_qs(parsed_url.query)
     name_val = query_params.get('v', ['Han'])[0]
     target_url = (
-        f"https://xxx.yourhost.name/to_database"
+        f"https://xxx.yyy.com/"
         f"?action=get&k=name&v={urllib.parse.quote(name_val)}"
     )
     try:
@@ -37,22 +43,44 @@ def location_database_handler(handler):
         handler.wfile.write(json.dumps({"success": False, "error": str(e)}).encode('utf-8'))
 
 def train_times_handler(handler):
-    """Handles /api/trains?from=CLJ&to=WAT -> live departures with delay/cancel"""
+    """Handles /api/trains?from=CLJ&to=WAT -> uses raildata.org.uk"""
     parsed_url = urllib.parse.urlparse(handler.path)
     query_params = urllib.parse.parse_qs(parsed_url.query)
 
     from_crs = query_params.get('from', ['CLJ'])[0].upper()
     to_crs = query_params.get('to', ['WAT'])[0].upper()
 
-    target_url = f"https://huxley2.azurewebsites.net/departures/{urllib.parse.quote(from_crs)}/to/{urllib.parse.quote(to_crs)}?expand=true"
+    if not RAIL_API_KEY:
+        handler.send_response(500)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.end_headers()
+        handler.wfile.write(json.dumps({"success": False, "error": "RAIL_API_KEY not set"}).encode('utf-8'))
+        return
+
+    base = f"https://api1.raildata.org.uk/{RAIL_PRODUCT_PREFIX}/LDBWS/api/20220120/GetDepBoardWithDetails/{urllib.parse.quote(from_crs)}"
+    qs = urllib.parse.urlencode({
+        "numRows": "10",
+        "filterCrs": to_crs,
+        "filterType": "to",
+        "timeOffset": "0",
+        "timeWindow": "120"
+    })
+    target_url = f"{base}?{qs}"
 
     try:
-        req = urllib.request.Request(target_url, headers={'User-Agent': 'Python-Proxy'})
+        req = urllib.request.Request(
+            target_url,
+            headers={'x-apikey': RAIL_API_KEY, 'User-Agent': 'Python-Proxy'}
+        )
         with urllib.request.urlopen(req, timeout=10) as response:
             raw = json.loads(response.read().decode('utf-8'))
 
         services = []
         for s in (raw.get('trainServices') or [])[:10]:
+            dest_name = None
+            if s.get('destination') and len(s['destination']) > 0:
+                dest_name = s['destination'][0].get('locationName')
+
             services.append({
                 "std": s.get('std'),
                 "etd": s.get('etd'),
@@ -61,13 +89,13 @@ def train_times_handler(handler):
                 "cancelReason": s.get('cancelReason'),
                 "delayReason": s.get('delayReason'),
                 "operator": s.get('operator'),
-                "destination": s.get('destination', [{}])[0].get('locationName') if s.get('destination') else None
+                "destination": dest_name
             })
 
         out = {
-            "from": raw.get('crs'),
+            "from": raw.get('crs', from_crs),
             "to": to_crs,
-            "generatedAt": raw.get('generatedAt'),
+            "generatedAt": raw.get('generatedAt', datetime.now().isoformat()),
             "services": services
         }
 
@@ -77,6 +105,12 @@ def train_times_handler(handler):
         handler.end_headers()
         handler.wfile.write(json.dumps(out).encode('utf-8'))
 
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='ignore')
+        handler.send_response(e.code)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.end_headers()
+        handler.wfile.write(json.dumps({"success": False, "error": f"Rail API {e.code}", "body": body}).encode('utf-8'))
     except Exception as e:
         handler.send_response(500)
         handler.send_header("Content-Type", "application/json; charset=utf-8")
